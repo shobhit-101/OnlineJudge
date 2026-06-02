@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+
+# Local tool settings
+.claude/settings.local.json
+
+# Local dev guides (kept local, not committed to the repo)
+CLAUDE.md
+docs/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
