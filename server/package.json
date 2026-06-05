@@ -7,6 +7,7 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "build:image:cpp": "docker build -t oj-cpp-runner:2 src/sandbox/images/cpp",
-    "sandbox:demo": "node src/sandbox/demo.js"
+    "sandbox:demo": "node src/sandbox/demo.js",
+    "sandbox:attacks": "node src/sandbox/attacks/run.js"
   }
 }
