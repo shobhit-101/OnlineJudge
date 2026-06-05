@@ -26,6 +26,10 @@ int main() {
 }
 `;
 
+const INFINITE_LOOP = `
+int main() { while (true) {} }   // never returns -> must be killed by the timeout
+`;
+
 async function main() {
   console.log("1) normal run, input '3 4':");
   console.log(await runCpp({ source: SUM, input: "3 4\n" }));
@@ -35,6 +39,9 @@ async function main() {
 
   console.log("\n3) runtime crash:");
   console.log(await runCpp({ source: RUNTIME_CRASH }));
+
+  console.log("\n4) infinite loop (should time out ~2s, not hang):");
+  console.log(await runCpp({ source: INFINITE_LOOP }));
 }
 
 main().catch((err) => {

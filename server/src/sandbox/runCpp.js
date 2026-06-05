@@ -1,65 +1,131 @@
 "use strict";
 
-// Step 3 — drive the C++ runner container from Node: get code in, compile it,
-// run it with stdin, capture output. NO resource limits yet (time/memory/
-// network/fs). Those land in Steps 4-5; this is the bare mechanism.
+// Step 3 — bare compile & run from Node.
+// Step 4 — lock the container down: no network, capped memory/pids, read-only
+//          filesystem (writable tmpfs workspace only), dropped Linux
+//          capabilities, no privilege escalation, and a host-side wall-clock
+//          timeout on both compile and run.
 //
-// Shape: one container per submission (DECISIONS 004). We start a throwaway
-// container, copy the source in, compile ONCE, then run. Later (Step 12) the
-// same container will run many test cases via repeated `docker exec`.
+// Shape: one container per submission (DECISIONS 004), driven via `docker exec`,
+// always torn down in a `finally`.
 
 const { spawn } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 
 const IMAGE = "oj-cpp-runner:1";
 
+// How long the keep-alive container lives at most. The real per-step bounds are
+// the timeouts below; this is just a backstop so a crashed worker can't orphan a
+// container forever (it's also force-removed in `finally`).
+const CONTAINER_TTL_SEC = 300;
+
+// uid/gid of the unprivileged `runner` user baked into the image.
+const RUNNER_UID = 1000;
+const RUNNER_GID = 1000;
+
+const DEFAULT_LIMITS = {
+  compileTimeMs: 10000, // wall-clock cap on compilation (compile-bomb guard)
+  runTimeMs: 2000, // wall-clock cap on a single execution -> TLE
+  memoryMb: 256, // hard memory ceiling (mem+swap) -> MLE
+  pidsLimit: 64, // max processes -> contains fork bombs
+  workspaceSizeMb: 64, // size of the writable tmpfs scratch space
+};
+
+/**
+ * Build the hardened `docker run` argument list for the keep-alive container.
+ * Each flag maps to a real attack we're defending against.
+ */
+function dockerRunArgs(name, limits) {
+  const { memoryMb, pidsLimit, workspaceSizeMb } = limits;
+  return [
+    "run", "-d", "--name", name,
+
+    // --- isolation ---
+    "--network", "none", // no internet / localhost / other services
+    "--memory", `${memoryMb}m`, // memory ceiling
+    "--memory-swap", `${memoryMb}m`, // == memory => swap disabled (real cap)
+    "--pids-limit", String(pidsLimit), // kill fork bombs
+    "--cap-drop", "ALL", // no Linux capabilities at all
+    "--security-opt", "no-new-privileges", // can't gain privileges via setuid
+    "--read-only", // root filesystem is immutable
+    // The only writable places are small in-memory tmpfs mounts owned by runner.
+    // /sandbox must allow exec (we run the compiled binary from here).
+    "--tmpfs", `/sandbox:rw,exec,nosuid,size=${workspaceSizeMb}m,uid=${RUNNER_UID},gid=${RUNNER_GID}`,
+    "--tmpfs", `/tmp:rw,nosuid,nodev,size=${workspaceSizeMb}m,uid=${RUNNER_UID},gid=${RUNNER_GID}`,
+    "--user", `${RUNNER_UID}:${RUNNER_GID}`, // never root (belt + suspenders)
+
+    IMAGE,
+    "sleep", String(CONTAINER_TTL_SEC),
+  ];
+}
+
 /**
  * Run a `docker` subcommand, capturing stdout/stderr/exit code.
- * If `input` is given, it is written to the process's stdin.
+ * If `input` is given, it is written to stdin. If `timeoutMs` is given and the
+ * command runs longer, the docker client is killed and `timedOut` is set.
  *
- * @param {string[]} args - arguments passed to the docker CLI
- * @param {{input?: string}} [opts]
- * @returns {Promise<{code: number|null, stdout: string, stderr: string}>}
+ * @param {string[]} args
+ * @param {{input?: string, timeoutMs?: number}} [opts]
+ * @returns {Promise<{code:number|null, stdout:string, stderr:string, timedOut:boolean}>}
  */
-function docker(args, { input } = {}) {
+function docker(args, { input, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+
+    const timer = timeoutMs
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL"); // kills the docker client; container killed in finally
+        }, timeoutMs)
+      : null;
+
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
-    child.on("error", reject); // e.g. docker not on PATH
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.on("error", (err) => {
+      if (timer) clearTimeout(timer);
+      reject(err); // e.g. docker not on PATH
+    });
+    child.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      resolve({ code, stdout, stderr, timedOut });
+    });
+
     child.stdin.end(input ?? "");
   });
 }
 
 /**
- * Compile and run a single C++ source inside a fresh container.
+ * Compile and run a single C++ source inside a fresh, locked-down container.
  *
  * @param {object} opts
- * @param {string} opts.source   - C++ source code
- * @param {string} [opts.input]  - stdin fed to the program at run time
+ * @param {string} opts.source         - C++ source code
+ * @param {string} [opts.input]        - stdin fed to the program
+ * @param {object} [opts.limits]       - overrides for DEFAULT_LIMITS
  * @returns {Promise<{
  *   compileOk: boolean,
  *   compileOutput: string,
  *   stdout: string,
  *   stderr: string,
- *   exitCode: number|null
+ *   exitCode: number|null,
+ *   timedOut: boolean,
+ *   timeMs: number
  * }>}
  */
-async function runCpp({ source, input = "" }) {
+async function runCpp({ source, input = "", limits = {} } = {}) {
+  const lim = { ...DEFAULT_LIMITS, ...limits };
   const name = `oj-cpp-${randomUUID()}`;
 
-  // 1. Start a throwaway container that stays alive while we drive it.
-  //    `sleep` just keeps it running; the real work happens via `docker exec`.
-  const started = await docker(["run", "-d", "--name", name, IMAGE, "sleep", "60"]);
+  // 1. Start the hardened keep-alive container.
+  const started = await docker(dockerRunArgs(name, lim));
   if (started.code !== 0) {
     throw new Error(`failed to start container: ${started.stderr.trim()}`);
   }
 
   try {
-    // 2. Put the source inside the container by piping it into a file.
+    // 2. Put the source inside the container.
     const put = await docker(["exec", "-i", name, "sh", "-c", "cat > main.cpp"], {
       input: source,
     });
@@ -67,33 +133,52 @@ async function runCpp({ source, input = "" }) {
       throw new Error(`failed to write source: ${put.stderr.trim()}`);
     }
 
-    // 3. Compile. A non-zero exit here is a Compilation Error (CE), not a crash.
-    const compile = await docker([
-      "exec", name, "g++", "-O2", "-std=c++17", "-o", "main", "main.cpp",
-    ]);
+    // 3. Compile (inside the locked container, under a wall-clock cap).
+    const compile = await docker(
+      ["exec", name, "g++", "-O2", "-std=c++17", "-o", "main", "main.cpp"],
+      { timeoutMs: lim.compileTimeMs }
+    );
+    if (compile.timedOut) {
+      return ce("compilation timed out");
+    }
     if (compile.code !== 0) {
-      return {
-        compileOk: false,
-        compileOutput: compile.stderr || compile.stdout,
-        stdout: "",
-        stderr: "",
-        exitCode: null,
-      };
+      return ce(compile.stderr || compile.stdout);
     }
 
-    // 4. Run the compiled program, feeding the test input on stdin.
-    const run = await docker(["exec", "-i", name, "./main"], { input });
+    // 4. Run, feeding the test input, under a wall-clock cap (-> TLE).
+    const t0 = Date.now();
+    const run = await docker(["exec", "-i", name, "./main"], {
+      input,
+      timeoutMs: lim.runTimeMs,
+    });
+    const timeMs = Date.now() - t0;
+
     return {
       compileOk: true,
       compileOutput: "",
       stdout: run.stdout,
       stderr: run.stderr,
-      exitCode: run.code,
+      exitCode: run.timedOut ? null : run.code,
+      timedOut: run.timedOut,
+      timeMs,
     };
   } finally {
-    // 5. Always tear the container down, success or failure.
+    // 5. Always demolish the container.
     await docker(["rm", "-f", name]);
   }
 }
 
-module.exports = { runCpp };
+// Helper: shape a Compilation-Error result.
+function ce(message) {
+  return {
+    compileOk: false,
+    compileOutput: message,
+    stdout: "",
+    stderr: "",
+    exitCode: null,
+    timedOut: false,
+    timeMs: 0,
+  };
+}
+
+module.exports = { runCpp, DEFAULT_LIMITS };
