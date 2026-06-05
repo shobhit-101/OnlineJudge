@@ -11,8 +11,13 @@
 
 const { spawn } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
+const path = require("node:path");
 
 const IMAGE = "oj-cpp-runner:1";
+
+// Custom seccomp allowlist (Step 5): deny-by-default syscall filter. Absolute
+// path so the docker CLI can read it regardless of cwd.
+const SECCOMP_PROFILE = path.join(__dirname, "seccomp", "cpp-seccomp.json");
 
 // How long the keep-alive container lives at most. The real per-step bounds are
 // the timeouts below; this is just a backstop so a crashed worker can't orphan a
@@ -47,6 +52,7 @@ function dockerRunArgs(name, limits) {
     "--pids-limit", String(pidsLimit), // kill fork bombs
     "--cap-drop", "ALL", // no Linux capabilities at all
     "--security-opt", "no-new-privileges", // can't gain privileges via setuid
+    "--security-opt", `seccomp=${SECCOMP_PROFILE}`, // deny-by-default syscall allowlist
     "--read-only", // root filesystem is immutable
     // The only writable places are small in-memory tmpfs mounts owned by runner.
     // /sandbox must allow exec (we run the compiled binary from here).
