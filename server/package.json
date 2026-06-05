@@ -3,11 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "main": "src/index.js",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "mongoose": "^8.9.5"
+  },
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "build:image:cpp": "docker build -t oj-cpp-runner:2 src/sandbox/images/cpp",
     "sandbox:demo": "node src/sandbox/demo.js",
-    "sandbox:attacks": "node src/sandbox/attacks/run.js"
+    "sandbox:attacks": "node src/sandbox/attacks/run.js",
+    "seed": "node src/data/seed.js"
   }
 }
