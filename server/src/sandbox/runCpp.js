@@ -13,7 +13,17 @@ const { spawn } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 const path = require("node:path");
 
-const IMAGE = "oj-cpp-runner:1";
+const IMAGE = "oj-cpp-runner:2";
+
+// Sandbox-level outcomes (Step 6). These map onto verdicts later: OK still needs
+// output comparison to become AC vs WA; the rest are already final.
+const OUTCOME = {
+  OK: "OK", // compiled, ran, exited 0 — output comparison decides AC/WA
+  CE: "CE", // compilation failed
+  TLE: "TLE", // exceeded the wall-clock limit
+  MLE: "MLE", // exceeded the memory limit (OOM-killed)
+  RE: "RE", // crashed / non-zero exit
+};
 
 // Custom seccomp allowlist (Step 5): deny-by-default syscall filter. Absolute
 // path so the docker CLI can read it regardless of cwd.
@@ -151,40 +161,96 @@ async function runCpp({ source, input = "", limits = {} } = {}) {
       return ce(compile.stderr || compile.stdout);
     }
 
-    // 4. Run, feeding the test input, under a wall-clock cap (-> TLE).
+    // 4. Run under GNU time (for max RSS), feeding the test input, under a
+    //    wall-clock cap (-> TLE). `time` writes its report to a file so the
+    //    program's own stdout/stderr stay clean.
     const t0 = Date.now();
-    const run = await docker(["exec", "-i", name, "./main"], {
-      input,
-      timeoutMs: lim.runTimeMs,
-    });
+    const run = await docker(
+      ["exec", "-i", name, "/usr/bin/time", "-v", "-o", "/sandbox/.time", "./main"],
+      { input, timeoutMs: lim.runTimeMs }
+    );
     const timeMs = Date.now() - t0;
 
-    return {
-      compileOk: true,
-      compileOutput: "",
+    // 5. Classify the outcome from the raw signals.
+    if (run.timedOut) {
+      return result(OUTCOME.TLE, {
+        stdout: run.stdout,
+        stderr: run.stderr,
+        exitCode: null,
+        timedOut: true,
+        timeMs,
+      });
+    }
+
+    const oomKilled = await inspectOomKilled(name);
+    const memoryKb = await readMaxRss(name);
+
+    let outcome;
+    if (oomKilled) outcome = OUTCOME.MLE;
+    else if (run.code !== 0) outcome = OUTCOME.RE;
+    else outcome = OUTCOME.OK; // AC vs WA decided later by output comparison
+
+    return result(outcome, {
       stdout: run.stdout,
       stderr: run.stderr,
-      exitCode: run.timedOut ? null : run.code,
-      timedOut: run.timedOut,
+      exitCode: run.code,
+      oomKilled,
       timeMs,
-    };
+      memoryKb,
+    });
   } finally {
-    // 5. Always demolish the container.
+    // 6. Always demolish the container.
     await docker(["rm", "-f", name]);
   }
+}
+
+// Was the (exec'd) process OOM-killed? Container-level flag; correct for the
+// one-run-per-container case here. Step 12 (many runs per container) will switch
+// to the per-run cgroup `oom_kill` counter, since this flag sticks once set.
+async function inspectOomKilled(name) {
+  const r = await docker(["inspect", name, "--format", "{{.State.OOMKilled}}"]);
+  return r.stdout.trim() === "true";
+}
+
+// Parse peak memory (KB) from GNU time's report.
+async function readMaxRss(name) {
+  const r = await docker(["exec", name, "cat", "/sandbox/.time"]);
+  if (r.code !== 0) return null;
+  const m = r.stdout.match(/Maximum resident set size \(kbytes\):\s*(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+// Assemble a full, uniform result object from an outcome + the known fields.
+function result(outcome, fields) {
+  return {
+    outcome,
+    compileOk: true,
+    compileOutput: "",
+    stdout: "",
+    stderr: "",
+    exitCode: null,
+    timedOut: false,
+    oomKilled: false,
+    timeMs: 0,
+    memoryKb: null,
+    ...fields,
+  };
 }
 
 // Helper: shape a Compilation-Error result.
 function ce(message) {
   return {
+    outcome: OUTCOME.CE,
     compileOk: false,
     compileOutput: message,
     stdout: "",
     stderr: "",
     exitCode: null,
     timedOut: false,
+    oomKilled: false,
     timeMs: 0,
+    memoryKb: null,
   };
 }
 
-module.exports = { runCpp, DEFAULT_LIMITS };
+module.exports = { runCpp, DEFAULT_LIMITS, OUTCOME };

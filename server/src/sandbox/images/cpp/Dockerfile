@@ -11,8 +11,14 @@
 
 FROM gcc:13
 
-# Unprivileged user to execute untrusted code as (fixed uid/gid for predictability).
-RUN groupadd --gid 1000 runner \
+# GNU time (/usr/bin/time) gives accurate per-process peak memory (max RSS),
+# which we use to report the "memory used" stat and is more precise than the
+# container-level cgroup peak (that would also include the compiler's memory).
+# Then create an unprivileged user to execute untrusted code as.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends time \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 1000 runner \
  && useradd --uid 1000 --gid 1000 --no-create-home --shell /usr/sbin/nologin runner \
  && mkdir -p /sandbox \
  && chown runner:runner /sandbox

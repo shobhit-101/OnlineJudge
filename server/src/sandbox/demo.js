@@ -30,18 +30,29 @@ const INFINITE_LOOP = `
 int main() { while (true) {} }   // never returns -> must be killed by the timeout
 `;
 
+const MEMORY_BOMB = `
+#include <vector>
+int main() {
+  std::vector<long> v;
+  while (true) v.push_back(1);   // grows past the memory cap -> OOM-killed
+}
+`;
+
 async function main() {
-  console.log("1) normal run, input '3 4':");
+  console.log("1) normal run, input '3 4'  -> expect OK:");
   console.log(await runCpp({ source: SUM, input: "3 4\n" }));
 
-  console.log("\n2) compile error:");
+  console.log("\n2) compile error          -> expect CE:");
   console.log(await runCpp({ source: COMPILE_ERROR }));
 
-  console.log("\n3) runtime crash:");
+  console.log("\n3) runtime crash           -> expect RE:");
   console.log(await runCpp({ source: RUNTIME_CRASH }));
 
-  console.log("\n4) infinite loop (should time out ~2s, not hang):");
+  console.log("\n4) infinite loop           -> expect TLE (~2s, not a hang):");
   console.log(await runCpp({ source: INFINITE_LOOP }));
+
+  console.log("\n5) memory bomb             -> expect MLE:");
+  console.log(await runCpp({ source: MEMORY_BOMB }));
 }
 
 main().catch((err) => {
