@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "build:image:cpp": "docker build -t oj-cpp-runner:1 src/sandbox/images/cpp"
+    "build:image:cpp": "docker build -t oj-cpp-runner:1 src/sandbox/images/cpp",
+    "sandbox:demo": "node src/sandbox/demo.js"
   }
 }
