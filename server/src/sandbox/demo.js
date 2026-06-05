@@ -1,9 +1,9 @@
 "use strict";
 
-// Manual demo for Step 3: exercises runCpp() against three cases so we can see
-// the bare compile/run mechanism work. Run with: npm run -w @oj/server sandbox:demo
+// Manual demo: exercises runInSandbox() against the five outcome shapes so we can
+// see the sandbox classify each. Run with: npm run -w @oj/server sandbox:demo
 
-const { runCpp } = require("./runCpp");
+const { runInSandbox } = require("./index.js");
 
 const SUM = `
 #include <iostream>
@@ -38,21 +38,23 @@ int main() {
 }
 `;
 
+const run = (code, input) => runInSandbox({ language: "cpp", code, input });
+
 async function main() {
   console.log("1) normal run, input '3 4'  -> expect OK:");
-  console.log(await runCpp({ source: SUM, input: "3 4\n" }));
+  console.log(await run(SUM, "3 4\n"));
 
   console.log("\n2) compile error          -> expect CE:");
-  console.log(await runCpp({ source: COMPILE_ERROR }));
+  console.log(await run(COMPILE_ERROR));
 
   console.log("\n3) runtime crash           -> expect RE:");
-  console.log(await runCpp({ source: RUNTIME_CRASH }));
+  console.log(await run(RUNTIME_CRASH));
 
   console.log("\n4) infinite loop           -> expect TLE (~2s, not a hang):");
-  console.log(await runCpp({ source: INFINITE_LOOP }));
+  console.log(await run(INFINITE_LOOP));
 
   console.log("\n5) memory bomb             -> expect MLE:");
-  console.log(await runCpp({ source: MEMORY_BOMB }));
+  console.log(await run(MEMORY_BOMB));
 }
 
 main().catch((err) => {

@@ -8,7 +8,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { runCpp } = require("../runCpp");
+const { runInSandbox } = require("../index.js");
 
 const read = (file) => fs.readFileSync(path.join(__dirname, file), "utf8");
 
@@ -50,7 +50,7 @@ const attacks = [
   let passed = 0;
 
   for (const a of attacks) {
-    const r = await runCpp({ source: read(a.file) });
+    const r = await runInSandbox({ language: "cpp", code: read(a.file) });
     const ok = a.check(r);
     if (ok) passed++;
 
