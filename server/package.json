@@ -13,6 +13,7 @@
     "build:image:cpp": "docker build -t oj-cpp-runner:2 src/sandbox/images/cpp",
     "sandbox:demo": "node src/sandbox/demo.js",
     "sandbox:attacks": "node src/sandbox/attacks/run.js",
-    "seed": "node src/data/seed.js"
+    "seed": "node src/data/seed.js",
+    "engine:demo": "node src/engine/demo.js"
   }
 }
