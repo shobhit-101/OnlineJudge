@@ -21,6 +21,9 @@ const {
 } = require("../data/submissions");
 const { Problem, TestCase } = require("../data/models");
 const { judge } = require("../engine/judge");
+const { publishProgress } = require("../queue/progress");
+
+const publish = (id, event) => publishProgress(id, event).catch(() => {});
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -39,6 +42,7 @@ async function processJob(submissionId) {
   if (!sub) throw new Error(`submission ${submissionId} not found`);
 
   await setRunning(sub._id);
+  publish(submissionId, { type: "status", status: "running" });
 
   const problem = await Problem.findById(sub.problemId).lean();
   if (!problem) throw new Error(`problem ${sub.problemId} not found`);
@@ -50,8 +54,24 @@ async function processJob(submissionId) {
       : { problemId: sub.problemId };
   const testcases = await TestCase.find(tcQuery).sort({ index: 1 }).lean();
 
-  const result = await judge({ language: sub.language, code: sub.code, problem, testcases });
+  const result = await judge({
+    language: sub.language,
+    code: sub.code,
+    problem,
+    testcases,
+    onProgress: (event) => publish(submissionId, event),
+  });
   await completeSubmission(sub._id, result);
+  publish(submissionId, {
+    type: "result",
+    status: "done",
+    verdict: result.verdict,
+    passed: result.passed,
+    total: result.total,
+    stats: result.stats,
+    failedCase: result.failedCase,
+    compileOutput: result.compileOutput,
+  });
   return result;
 }
 
@@ -83,6 +103,7 @@ async function consumeOnce(redis, consumer, blockMs = 5000) {
     // issues as CE/RE/etc.). Mark it errored so it doesn't sit at `running`.
     console.error(`job ${entryId} (submission ${submissionId}) failed: ${err.message}`);
     await failSubmission(submissionId, err.message).catch(() => {});
+    publish(submissionId, { type: "result", status: "error", error: err.message });
   } finally {
     await redis.xack(STREAM_KEY, GROUP, entryId);
   }
@@ -95,6 +116,7 @@ async function deadLetter(redis, entryId, reason) {
   if (rows && rows[0]) {
     const submissionId = fieldsToObject(rows[0][1]).submissionId;
     await failSubmission(submissionId, reason).catch(() => {});
+    publish(submissionId, { type: "result", status: "error", error: reason });
   }
   await redis.xack(STREAM_KEY, GROUP, entryId);
 }

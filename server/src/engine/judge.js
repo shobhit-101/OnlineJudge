@@ -21,7 +21,7 @@ const VERDICT = { AC: "AC", WA: "WA", TLE: "TLE", MLE: "MLE", RE: "RE", CE: "CE"
  * @param {object[]} opts.testcases        - cases to run, in order (each .input/.expected/.index)
  * @returns {Promise<{verdict, passed, total, compileOutput, failedCase, stats}>}
  */
-async function judge({ language, code, problem, testcases }) {
+async function judge({ language, code, problem, testcases, onProgress = () => {} }) {
   const strategy = getStrategy(language);
   const harness = strategy.buildHarness({ signature: problem.signature, code });
 
@@ -30,6 +30,7 @@ async function judge({ language, code, problem, testcases }) {
   if (problem.limits && problem.limits.timeMs) limits.runTimeMs = problem.limits.timeMs;
   if (problem.limits && problem.limits.memoryMb) limits.memoryMb = problem.limits.memoryMb;
 
+  onProgress({ type: "status", status: "compiling" });
   const session = await openSandbox({ language, code: harness, limits });
   try {
     if (!session.compile.ok) {
@@ -47,7 +48,9 @@ async function judge({ language, code, problem, testcases }) {
     let maxMemoryKb = 0;
     let passed = 0;
 
-    for (const tc of testcases) {
+    for (let i = 0; i < testcases.length; i++) {
+      const tc = testcases[i];
+      onProgress({ type: "progress", index: i + 1, total: testcases.length });
       const input = serializeInput(tc.input, problem.signature.params);
       const expected = serializeExpected(tc.expected, problem.signature.returnType);
       const r = await session.run(input);
