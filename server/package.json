@@ -18,6 +18,8 @@
     "engine:demo": "node src/engine/demo.js",
     "judge:demo": "node src/engine/judge.demo.js",
     "submission:demo": "node src/engine/submission.demo.js",
-    "queue:demo": "node src/queue/demo.js"
+    "queue:demo": "node src/queue/demo.js",
+    "worker": "node src/worker/start.js",
+    "worker:demo": "node src/worker/demo.js"
   }
 }
