@@ -6,6 +6,7 @@
 const express = require("express");
 const cors = require("cors");
 const { healthRouter } = require("./routes/health");
+const { problemsRouter } = require("./routes/problems");
 const { notFound, errorHandler } = require("./middleware/errors");
 
 function createApp() {
@@ -15,7 +16,8 @@ function createApp() {
   app.use(express.json({ limit: "256kb" })); // submissions carry code; cap the body
 
   app.use("/health", healthRouter);
-  // Phase-3 endpoints (problems, submissions, …) mount here in later steps.
+  app.use("/api/problems", problemsRouter);
+  // More Phase-3 endpoints (submissions, SSE, …) mount here in later steps.
 
   app.use(notFound);
   app.use(errorHandler);
