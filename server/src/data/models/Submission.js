@@ -34,6 +34,9 @@ const SubmissionSchema = new Schema(
       enum: ["AC", "WA", "TLE", "MLE", "RE", "CE"],
       default: null,
     },
+    compileOutput: { type: String, default: "" }, // compiler message on CE
+    passed: { type: Number, default: null }, // test cases passed
+    total: { type: Number, default: null }, // total test cases
     failedCase: { type: FailedCaseSchema, default: null },
     stats: {
       timeMs: { type: Number, default: null },
