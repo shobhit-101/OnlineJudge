@@ -24,6 +24,9 @@ JavaScript (MERN) · Node + Express · MongoDB · Redis Streams · React + Monac
 ## Develop
 ```sh
 npm install
+# Redis (submission queue) as a local container:
+docker run -d --name oj-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
 npm run -w @oj/server dev
 ```
-Requires Node ≥ 20 and Docker Desktop (for the sandbox, from Phase 1 on).
+Requires Node ≥ 20, Docker Desktop (sandbox + Redis), and a MongoDB connection
+string in `server/.env` (see `.env.example`).

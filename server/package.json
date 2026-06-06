@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "dependencies": {
     "dotenv": "^16.4.7",
+    "ioredis": "^5.4.2",
     "mongoose": "^8.9.5"
   },
   "scripts": {
@@ -16,6 +17,7 @@
     "seed": "node src/data/seed.js",
     "engine:demo": "node src/engine/demo.js",
     "judge:demo": "node src/engine/judge.demo.js",
-    "submission:demo": "node src/engine/submission.demo.js"
+    "submission:demo": "node src/engine/submission.demo.js",
+    "queue:demo": "node src/queue/demo.js"
   }
 }
