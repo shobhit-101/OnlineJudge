@@ -6,6 +6,7 @@
 
 const cpp = require("./languages/cpp");
 const { serializeInput, serializeExpected } = require("./serialize");
+const { compareOutput } = require("./compare");
 
 const strategies = { cpp };
 
@@ -15,4 +16,4 @@ function getStrategy(language) {
   return s;
 }
 
-module.exports = { getStrategy, serializeInput, serializeExpected };
+module.exports = { getStrategy, serializeInput, serializeExpected, compareOutput };
