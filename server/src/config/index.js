@@ -20,6 +20,9 @@ const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   mongoUri: required("MONGODB_URI"),
   redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
+  // How many judges run in parallel in one worker process. Bounded by host
+  // resources (each judge spins a container); tune to CPU/RAM.
+  workerConcurrency: Number(process.env.WORKER_CONCURRENCY || 4),
 };
 
 module.exports = { config };

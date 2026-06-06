@@ -36,6 +36,15 @@ async function completeSubmission(id, result) {
   );
 }
 
+// Mark a submission as failed due to a system/infra error (not the user's code).
+async function failSubmission(id, reason) {
+  return Submission.findByIdAndUpdate(
+    id,
+    { $set: { status: "error", error: String(reason).slice(0, 500) } },
+    { new: true }
+  );
+}
+
 async function getSubmission(id) {
   return Submission.findById(id);
 }
@@ -52,6 +61,7 @@ module.exports = {
   createSubmission,
   setRunning,
   completeSubmission,
+  failSubmission,
   getSubmission,
   listSubmissions,
 };

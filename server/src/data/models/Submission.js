@@ -25,7 +25,9 @@ const SubmissionSchema = new Schema(
     code: { type: String, required: true },
     status: {
       type: String,
-      enum: ["queued", "running", "done"],
+      // `error` = a system/infra failure while judging (not the user's fault),
+      // e.g. a worker died repeatedly on this job (Step 16 dead-letter).
+      enum: ["queued", "running", "done", "error"],
       default: "queued",
       index: true,
     },
@@ -34,6 +36,7 @@ const SubmissionSchema = new Schema(
       enum: ["AC", "WA", "TLE", "MLE", "RE", "CE"],
       default: null,
     },
+    error: { type: String, default: "" }, // system error message (status=error)
     compileOutput: { type: String, default: "" }, // compiler message on CE
     passed: { type: Number, default: null }, // test cases passed
     total: { type: Number, default: null }, // total test cases

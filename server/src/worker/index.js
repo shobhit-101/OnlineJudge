@@ -1,30 +1,39 @@
 "use strict";
 
-// Submission worker — consumer side (Step 15).
+// Submission worker — consumer side, with a pool and crash recovery (Steps 15-16).
 //
-// Reads jobs from the Redis stream via a consumer group, judges each submission,
-// and persists the verdict. A consumer group means a whole POOL of workers can
-// share one stream: each job is delivered to exactly one worker, and unacked jobs
-// stay in the group's pending list so a crashed worker's job can be reclaimed
-// (Step 16).
+// A consumer group lets many workers share one stream: each job goes to exactly
+// one worker. When a worker reads a job it enters the group's Pending Entries List
+// (PEL) until acked. If a worker dies mid-judge, its job is stuck in the PEL — so a
+// reclaim loop periodically XCLAIMs jobs idle past a threshold and retries them,
+// dead-lettering any that exceed a max delivery count (poison jobs).
 
-const { createRedisClient, STREAM_KEY, GROUP } = require("../queue/redis");
-const { getSubmission, setRunning, completeSubmission } = require("../data/submissions");
+const {
+  createRedisClient,
+  STREAM_KEY,
+  GROUP,
+} = require("../queue/redis");
+const {
+  getSubmission,
+  setRunning,
+  completeSubmission,
+  failSubmission,
+} = require("../data/submissions");
 const { Problem, TestCase } = require("../data/models");
 const { judge } = require("../engine/judge");
 
-// Create the consumer group if it doesn't exist (idempotent). "0" = the group
-// also picks up any jobs already on the stream; MKSTREAM creates the stream.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Create the consumer group if missing (idempotent). "0" => also pick up backlog.
 async function ensureGroup(redis) {
   try {
     await redis.xgroup("CREATE", STREAM_KEY, GROUP, "0", "MKSTREAM");
   } catch (err) {
-    if (!String(err.message).includes("BUSYGROUP")) throw err; // already exists -> fine
+    if (!String(err.message).includes("BUSYGROUP")) throw err;
   }
 }
 
-// Judge one persisted submission and save the result. The reusable orchestration
-// (load -> running -> judge -> done) used by the worker loop.
+// Judge one persisted submission and save the result (load -> running -> judge -> done).
 async function processJob(submissionId) {
   const sub = await getSubmission(submissionId);
   if (!sub) throw new Error(`submission ${submissionId} not found`);
@@ -47,8 +56,7 @@ function fieldsToObject(arr) {
   return o;
 }
 
-// Block-read one job, process it, ack it. Returns { entryId, submissionId, result }
-// or null if the read timed out with no job (idle).
+// Block-read one new job, process it, ack it. Returns the job summary or null if idle.
 async function consumeOnce(redis, consumer, blockMs = 5000) {
   const res = await redis.xreadgroup(
     "GROUP", GROUP, consumer,
@@ -58,51 +66,155 @@ async function consumeOnce(redis, consumer, blockMs = 5000) {
   );
   if (!res) return null;
 
-  const entries = res[0][1];
-  const [entryId, fields] = entries[0];
+  const [entryId, fields] = res[0][1][0];
   const submissionId = fieldsToObject(fields).submissionId;
 
   let result = null;
   try {
     result = await processJob(submissionId);
   } catch (err) {
+    // An exception here is an internal/infra failure (judge catches user-code
+    // issues as CE/RE/etc.). Mark it errored so it doesn't sit at `running`.
     console.error(`job ${entryId} (submission ${submissionId}) failed: ${err.message}`);
+    await failSubmission(submissionId, err.message).catch(() => {});
   } finally {
-    // Ack so the job leaves the pending list. (Step 16 revisits retry/reclaim.)
     await redis.xack(STREAM_KEY, GROUP, entryId);
   }
   return { entryId, submissionId, result };
 }
 
-// Long-running worker loop (production entry). Ctrl-C / SIGTERM to stop.
-async function startWorker({ consumer = `worker-${process.pid}`, blockMs = 5000 } = {}) {
-  const redis = createRedisClient();
-  await ensureGroup(redis);
-  console.log(`worker "${consumer}" listening on "${STREAM_KEY}" (group "${GROUP}")...`);
+// Read the fields of a job, mark its submission errored, and ack it (give up).
+async function deadLetter(redis, entryId, reason) {
+  const rows = await redis.xrange(STREAM_KEY, entryId, entryId);
+  if (rows && rows[0]) {
+    const submissionId = fieldsToObject(rows[0][1]).submissionId;
+    await failSubmission(submissionId, reason).catch(() => {});
+  }
+  await redis.xack(STREAM_KEY, GROUP, entryId);
+}
 
-  let running = true;
+// Reclaim jobs left pending (idle >= minIdleMs) by a crashed worker: retry them,
+// or dead-letter ones delivered more than maxDeliveries times. Returns a summary.
+async function reclaimStale(redis, consumer, { minIdleMs = 120000, maxDeliveries = 3, count = 10 } = {}) {
+  const pending = await redis.xpending(STREAM_KEY, GROUP, "IDLE", minIdleMs, "-", "+", count);
+  const actions = [];
+
+  for (const entry of pending) {
+    const entryId = entry[0];
+    const deliveries = Number(entry[3]);
+
+    if (deliveries > maxDeliveries) {
+      await deadLetter(redis, entryId, `exceeded ${maxDeliveries} retries`);
+      actions.push({ entryId, action: "dead-letter" });
+      continue;
+    }
+
+    // Take ownership (only if still idle >= minIdleMs — guards against stealing a
+    // job another worker just grabbed).
+    const claimed = await redis.xclaim(STREAM_KEY, GROUP, consumer, minIdleMs, entryId);
+    if (!claimed || claimed.length === 0) continue;
+
+    const submissionId = fieldsToObject(claimed[0][1]).submissionId;
+    try {
+      const result = await processJob(submissionId);
+      actions.push({ entryId, submissionId, action: "retried", verdict: result.verdict });
+    } catch (err) {
+      await failSubmission(submissionId, err.message).catch(() => {});
+      actions.push({ entryId, submissionId, action: "retry-failed" });
+    } finally {
+      await redis.xack(STREAM_KEY, GROUP, entryId);
+    }
+  }
+  return actions;
+}
+
+// ---- pool ----
+
+let shuttingDown = false;
+function installShutdown() {
   const stop = () => {
-    running = false;
+    shuttingDown = true;
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
-
-  while (running) {
-    try {
-      const job = await consumeOnce(redis, consumer, blockMs);
-      if (job && job.result) {
-        console.log(
-          `judged submission ${job.submissionId} -> ${job.result.verdict} ` +
-            `(${job.result.passed}/${job.result.total})`
-        );
-      }
-    } catch (err) {
-      console.error("worker loop error:", err.message);
-    }
-  }
-
-  await redis.quit();
-  console.log("worker stopped.");
 }
 
-module.exports = { ensureGroup, processJob, consumeOnce, startWorker };
+// One worker: its own connection, loops consuming jobs until shutdown.
+async function workerLoop(consumer, blockMs) {
+  const redis = createRedisClient();
+  try {
+    while (!shuttingDown) {
+      try {
+        const job = await consumeOnce(redis, consumer, blockMs);
+        if (job && job.result) {
+          console.log(
+            `[${consumer}] submission ${job.submissionId} -> ${job.result.verdict} ` +
+              `(${job.result.passed}/${job.result.total})`
+          );
+        }
+      } catch (err) {
+        console.error(`[${consumer}] loop error: ${err.message}`);
+      }
+    }
+  } finally {
+    await redis.quit();
+  }
+}
+
+// Periodically reclaims stale jobs from crashed workers until shutdown.
+async function reclaimLoop({ consumer, minIdleMs, maxDeliveries, everyMs }) {
+  const redis = createRedisClient();
+  try {
+    while (!shuttingDown) {
+      try {
+        const actions = await reclaimStale(redis, consumer, { minIdleMs, maxDeliveries });
+        for (const a of actions) console.log(`[reclaim] ${a.entryId} -> ${a.action}`);
+      } catch (err) {
+        console.error(`[reclaim] error: ${err.message}`);
+      }
+      await sleep(everyMs);
+    }
+  } finally {
+    await redis.quit();
+  }
+}
+
+// Start a pool of `size` workers + one reclaim loop. Resolves when shut down.
+async function startPool({
+  size = 4,
+  blockMs = 5000,
+  minIdleMs = 120000,
+  maxDeliveries = 3,
+  reclaimEveryMs = 30000,
+} = {}) {
+  const admin = createRedisClient();
+  await ensureGroup(admin);
+  await admin.quit();
+
+  installShutdown();
+  console.log(`worker pool starting: ${size} workers (group "${GROUP}", stream "${STREAM_KEY}")`);
+
+  const loops = [];
+  for (let i = 0; i < size; i++) {
+    loops.push(workerLoop(`worker-${process.pid}-${i}`, blockMs));
+  }
+  loops.push(
+    reclaimLoop({
+      consumer: `reclaimer-${process.pid}`,
+      minIdleMs,
+      maxDeliveries,
+      everyMs: reclaimEveryMs,
+    })
+  );
+
+  await Promise.all(loops);
+  console.log("worker pool stopped.");
+}
+
+module.exports = {
+  ensureGroup,
+  processJob,
+  consumeOnce,
+  reclaimStale,
+  startPool,
+};
