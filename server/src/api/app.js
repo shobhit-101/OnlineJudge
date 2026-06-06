@@ -7,6 +7,7 @@ const express = require("express");
 const cors = require("cors");
 const { healthRouter } = require("./routes/health");
 const { problemsRouter } = require("./routes/problems");
+const { submissionsRouter, runRouter } = require("./routes/submissions");
 const { notFound, errorHandler } = require("./middleware/errors");
 
 function createApp() {
@@ -17,7 +18,9 @@ function createApp() {
 
   app.use("/health", healthRouter);
   app.use("/api/problems", problemsRouter);
-  // More Phase-3 endpoints (submissions, SSE, …) mount here in later steps.
+  app.use("/api/submissions", submissionsRouter);
+  app.use("/api/run", runRouter);
+  // More Phase-3 endpoints (SSE, auth, …) mount here in later steps.
 
   app.use(notFound);
   app.use(errorHandler);

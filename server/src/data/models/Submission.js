@@ -23,6 +23,9 @@ const SubmissionSchema = new Schema(
     problemId: { type: Schema.Types.ObjectId, ref: "Problem", required: true, index: true },
     language: { type: String, enum: ["cpp", "python", "java"], required: true },
     code: { type: String, required: true },
+    // "submit" = judged against all cases + recorded; "run" = sample cases only,
+    // a quick check that doesn't count toward stats/solved status.
+    kind: { type: String, enum: ["submit", "run"], default: "submit", index: true },
     status: {
       type: String,
       // `error` = a system/infra failure while judging (not the user's fault),

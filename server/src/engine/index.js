@@ -9,6 +9,7 @@ const { serializeInput, serializeExpected } = require("./serialize");
 const { compareOutput } = require("./compare");
 
 const strategies = { cpp };
+const supportedLanguages = Object.keys(strategies);
 
 function getStrategy(language) {
   const s = strategies[language];
@@ -16,4 +17,10 @@ function getStrategy(language) {
   return s;
 }
 
-module.exports = { getStrategy, serializeInput, serializeExpected, compareOutput };
+module.exports = {
+  getStrategy,
+  supportedLanguages,
+  serializeInput,
+  serializeExpected,
+  compareOutput,
+};

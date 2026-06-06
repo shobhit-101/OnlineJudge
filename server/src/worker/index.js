@@ -42,7 +42,13 @@ async function processJob(submissionId) {
 
   const problem = await Problem.findById(sub.problemId).lean();
   if (!problem) throw new Error(`problem ${sub.problemId} not found`);
-  const testcases = await TestCase.find({ problemId: sub.problemId }).sort({ index: 1 }).lean();
+
+  // "run" judges against sample cases only; "submit" against the full suite.
+  const tcQuery =
+    sub.kind === "run"
+      ? { problemId: sub.problemId, isSample: true }
+      : { problemId: sub.problemId };
+  const testcases = await TestCase.find(tcQuery).sort({ index: 1 }).lean();
 
   const result = await judge({ language: sub.language, code: sub.code, problem, testcases });
   await completeSubmission(sub._id, result);

@@ -7,8 +7,8 @@
 const { Submission } = require("./models");
 
 // Create a new submission in the `queued` state.
-async function createSubmission({ userId = null, problemId, language, code }) {
-  return Submission.create({ userId, problemId, language, code, status: "queued" });
+async function createSubmission({ userId = null, problemId, language, code, kind = "submit" }) {
+  return Submission.create({ userId, problemId, language, code, kind, status: "queued" });
 }
 
 // Mark a submission as being judged.
