@@ -74,9 +74,11 @@ function queryString(params) {
 }
 
 export const api = {
-  // --- public ---
+  // --- public, but personalized when signed in: attaching a token (if present)
+  //     makes the API include each problem's per-user `status`. ---
   /** @returns {Promise<{ problems: ProblemListItem[] }>} */
-  listProblems: (params) => request(`/api/problems${queryString(params)}`),
+  listProblems: (params) =>
+    request(`/api/problems${queryString(params)}`, { auth: true }),
   getProblem: (slug) => request(`/api/problems/${encodeURIComponent(slug)}`),
   // Public, but sending the token lets the owner receive their submitted code.
   getSubmission: (id) => request(`/api/submissions/${id}`, { auth: true }),
