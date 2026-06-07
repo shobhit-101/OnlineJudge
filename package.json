@@ -4,7 +4,8 @@
   "private": true,
   "description": "From-scratch LeetCode-style online judge with a self-built Docker sandbox execution engine.",
   "workspaces": [
-    "server"
+    "server",
+    "web"
   ],
   "engines": {
     "node": ">=20"
