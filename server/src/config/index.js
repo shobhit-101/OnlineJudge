@@ -23,6 +23,9 @@ const config = {
   // How many judges run in parallel in one worker process. Bounded by host
   // resources (each judge spins a container); tune to CPU/RAM.
   workerConcurrency: Number(process.env.WORKER_CONCURRENCY || 4),
+  // Clerk auth keys (@clerk/express also reads these from process.env directly).
+  clerkSecretKey: process.env.CLERK_SECRET_KEY || "",
+  clerkPublishableKey: process.env.CLERK_PUBLISHABLE_KEY || "",
 };
 
 module.exports = { config };

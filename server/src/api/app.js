@@ -3,8 +3,11 @@
 // Builds the Express app: middleware, routes, and error handling. Kept separate
 // from the server bootstrap (src/index.js) so it can be created without listening.
 
+require("../config"); // ensure server/.env is loaded before Clerk reads its keys
+
 const express = require("express");
 const cors = require("cors");
+const { clerkMiddleware } = require("@clerk/express");
 const { healthRouter } = require("./routes/health");
 const { problemsRouter } = require("./routes/problems");
 const { submissionsRouter, runRouter } = require("./routes/submissions");
@@ -15,6 +18,7 @@ function createApp() {
 
   app.use(cors()); // frontend is a separate origin (Phase 4)
   app.use(express.json({ limit: "256kb" })); // submissions carry code; cap the body
+  app.use(clerkMiddleware()); // attaches auth from the session token (non-blocking)
 
   app.use("/health", healthRouter);
   app.use("/api/problems", problemsRouter);

@@ -1,6 +1,7 @@
 "use strict";
 
 const { Router } = require("express");
+const { getAuth } = require("@clerk/express");
 const { asyncHandler } = require("../middleware/asyncHandler");
 const { listProblems, getProblemBySlug } = require("../../data/problems");
 
@@ -11,7 +12,8 @@ problemsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const { difficulty, tag, q } = req.query;
-    const problems = await listProblems({ difficulty, tag, q });
+    const { userId } = getAuth(req); // null if not signed in -> no per-user status
+    const problems = await listProblems({ difficulty, tag, q, userId });
     res.json({ problems });
   })
 );

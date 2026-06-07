@@ -49,6 +49,19 @@ async function getSubmission(id) {
   return Submission.findById(id);
 }
 
+// Per-problem status for a user, derived from their official (submit) attempts:
+// "solved" if any AC, else "attempted". Returns { [problemId]: "solved"|"attempted" }.
+async function getSolvedAttemptedMap(userId) {
+  const subs = await Submission.find({ userId, kind: "submit" }, "problemId verdict").lean();
+  const map = {};
+  for (const s of subs) {
+    const key = String(s.problemId);
+    if (s.verdict === "AC") map[key] = "solved";
+    else if (map[key] !== "solved") map[key] = "attempted";
+  }
+  return map;
+}
+
 // Newest-first history, optionally scoped by user and/or problem.
 async function listSubmissions({ userId, problemId } = {}) {
   const q = {};
@@ -64,4 +77,5 @@ module.exports = {
   failSubmission,
   getSubmission,
   listSubmissions,
+  getSolvedAttemptedMap,
 };

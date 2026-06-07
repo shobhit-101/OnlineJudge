@@ -8,6 +8,7 @@
 const { Router } = require("express");
 const mongoose = require("mongoose");
 const { asyncHandler } = require("../middleware/asyncHandler");
+const { requireAuth } = require("../middleware/auth");
 const { Problem } = require("../../data/models");
 const { createSubmission, getSubmission } = require("../../data/submissions");
 const { enqueueSubmission } = require("../../queue/index.js");
@@ -40,7 +41,13 @@ async function enqueueAndRespond(req, res, kind) {
   const problem = await Problem.findOne({ slug: problemSlug }).select("_id").lean();
   if (!problem) throw badRequest(`unknown problem: ${problemSlug}`);
 
-  const sub = await createSubmission({ problemId: problem._id, language, code, kind });
+  const sub = await createSubmission({
+    userId: req.userId, // set by requireAuth
+    problemId: problem._id,
+    language,
+    code,
+    kind,
+  });
   await enqueueSubmission(sub._id);
 
   res.status(202).json({ submissionId: String(sub._id), status: sub.status, kind });
@@ -81,9 +88,10 @@ function publicSubmission(s) {
 
 const submissionsRouter = Router();
 
-// POST /api/submissions — official attempt (all test cases).
+// POST /api/submissions — official attempt (all test cases). Must be signed in.
 submissionsRouter.post(
   "/",
+  requireAuth,
   asyncHandler((req, res) => enqueueAndRespond(req, res, "submit"))
 );
 
@@ -153,9 +161,10 @@ submissionsRouter.get(
 
 const runRouter = Router();
 
-// POST /api/run — quick check against sample cases only (not an official attempt).
+// POST /api/run — quick check against sample cases only. Must be signed in.
 runRouter.post(
   "/",
+  requireAuth,
   asyncHandler((req, res) => enqueueAndRespond(req, res, "run"))
 );
 

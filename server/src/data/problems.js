@@ -5,14 +5,16 @@
 // a client (DECISIONS 010).
 
 const { Problem, TestCase } = require("./models");
+const { getSolvedAttemptedMap } = require("./submissions");
 
 function acceptanceRate(stats) {
   if (!stats || !stats.totalSubmissions) return null;
   return Math.round((stats.acceptedSubmissions / stats.totalSubmissions) * 100);
 }
 
-// List view: lightweight fields + optional filters (difficulty, tag, title search).
-async function listProblems({ difficulty, tag, q } = {}) {
+// List view: lightweight fields + optional filters. If userId is given, each
+// problem also carries the user's status ("solved" | "attempted" | "none").
+async function listProblems({ difficulty, tag, q, userId } = {}) {
   const query = {};
   if (difficulty) query.difficulty = difficulty;
   if (tag) query.tags = tag;
@@ -22,13 +24,19 @@ async function listProblems({ difficulty, tag, q } = {}) {
     .sort({ createdAt: 1 })
     .lean();
 
-  return docs.map((p) => ({
-    slug: p.slug,
-    title: p.title,
-    difficulty: p.difficulty,
-    tags: p.tags,
-    acceptanceRate: acceptanceRate(p.stats),
-  }));
+  const statusMap = userId ? await getSolvedAttemptedMap(userId) : null;
+
+  return docs.map((p) => {
+    const item = {
+      slug: p.slug,
+      title: p.title,
+      difficulty: p.difficulty,
+      tags: p.tags,
+      acceptanceRate: acceptanceRate(p.stats),
+    };
+    if (statusMap) item.status = statusMap[String(p._id)] || "none";
+    return item;
+  });
 }
 
 // Detail view: full statement + starter code + SAMPLE cases only.
