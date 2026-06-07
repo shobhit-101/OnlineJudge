@@ -18,9 +18,12 @@ async function setRunning(id) {
 
 // Finalize a submission with a judge result:
 //   { verdict, passed, total, compileOutput, failedCase, stats }
+// Conditional on a non-final state so a retried job (Step 16 reclaim) can't
+// double-complete — returns the doc ONLY if it actually transitioned (else null),
+// which the caller uses to count problem stats exactly once.
 async function completeSubmission(id, result) {
-  return Submission.findByIdAndUpdate(
-    id,
+  return Submission.findOneAndUpdate(
+    { _id: id, status: { $in: ["queued", "running"] } },
     {
       $set: {
         status: "done",

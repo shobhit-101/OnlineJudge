@@ -20,6 +20,7 @@ const {
   failSubmission,
 } = require("../data/submissions");
 const { Problem, TestCase } = require("../data/models");
+const { bumpProblemStats } = require("../data/problems");
 const { judge } = require("../engine/judge");
 const { publishProgress } = require("../queue/progress");
 
@@ -61,7 +62,14 @@ async function processJob(submissionId) {
     testcases,
     onProgress: (event) => publish(submissionId, event),
   });
-  await completeSubmission(sub._id, result);
+  const fresh = await completeSubmission(sub._id, result);
+  // Count problem acceptance exactly once, only for official attempts that
+  // actually transitioned to done (a retried/already-done job returns null).
+  if (fresh && sub.kind === "submit") {
+    await bumpProblemStats(sub.problemId, result.verdict === "AC").catch((e) =>
+      console.error(`stats bump failed for ${sub.problemId}: ${e.message}`)
+    );
+  }
   publish(submissionId, {
     type: "result",
     status: "done",

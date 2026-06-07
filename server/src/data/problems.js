@@ -12,6 +12,21 @@ function acceptanceRate(stats) {
   return Math.round((stats.acceptedSubmissions / stats.totalSubmissions) * 100);
 }
 
+// Atomically count one completed official attempt against a problem. `$inc` is
+// applied atomically per document, so concurrent submissions never lose updates
+// (no read-modify-write race).
+async function bumpProblemStats(problemId, accepted) {
+  await Problem.updateOne(
+    { _id: problemId },
+    {
+      $inc: {
+        "stats.totalSubmissions": 1,
+        "stats.acceptedSubmissions": accepted ? 1 : 0,
+      },
+    }
+  );
+}
+
 // List view: lightweight fields + optional filters. If userId is given, each
 // problem also carries the user's status ("solved" | "attempted" | "none").
 async function listProblems({ difficulty, tag, q, userId } = {}) {
@@ -66,4 +81,4 @@ async function getProblemBySlug(slug) {
   };
 }
 
-module.exports = { listProblems, getProblemBySlug };
+module.exports = { listProblems, getProblemBySlug, bumpProblemStats };
