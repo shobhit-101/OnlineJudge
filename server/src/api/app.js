@@ -11,6 +11,7 @@ const { clerkMiddleware } = require("@clerk/express");
 const { healthRouter } = require("./routes/health");
 const { problemsRouter } = require("./routes/problems");
 const { submissionsRouter, runRouter } = require("./routes/submissions");
+const { profileRouter } = require("./routes/profile");
 const { notFound, errorHandler } = require("./middleware/errors");
 
 function createApp() {
@@ -24,7 +25,7 @@ function createApp() {
   app.use("/api/problems", problemsRouter);
   app.use("/api/submissions", submissionsRouter);
   app.use("/api/run", runRouter);
-  // More Phase-3 endpoints (SSE, auth, …) mount here in later steps.
+  app.use("/api/profile", profileRouter);
 
   app.use(notFound);
   app.use(errorHandler);

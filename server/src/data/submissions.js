@@ -70,6 +70,13 @@ async function listSubmissions({ userId, problemId } = {}) {
   return Submission.find(q).sort({ createdAt: -1 });
 }
 
+// A user's official (submit) attempts, newest first, optionally for one problem.
+async function getUserHistory({ userId, problemId, limit = 50 }) {
+  const q = { userId, kind: "submit" };
+  if (problemId) q.problemId = problemId;
+  return Submission.find(q).sort({ createdAt: -1 }).limit(limit).lean();
+}
+
 module.exports = {
   createSubmission,
   setRunning,
@@ -77,5 +84,6 @@ module.exports = {
   failSubmission,
   getSubmission,
   listSubmissions,
+  getUserHistory,
   getSolvedAttemptedMap,
 };

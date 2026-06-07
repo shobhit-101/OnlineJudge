@@ -7,10 +7,11 @@
 
 const { Router } = require("express");
 const mongoose = require("mongoose");
+const { getAuth } = require("@clerk/express");
 const { asyncHandler } = require("../middleware/asyncHandler");
 const { requireAuth } = require("../middleware/auth");
 const { Problem } = require("../../data/models");
-const { createSubmission, getSubmission } = require("../../data/submissions");
+const { createSubmission, getSubmission, getUserHistory } = require("../../data/submissions");
 const { enqueueSubmission } = require("../../queue/index.js");
 const { createRedisClient } = require("../../queue/redis");
 const { channelFor } = require("../../queue/progress");
@@ -68,6 +69,19 @@ function resultEvent(s) {
   };
 }
 
+// A history list item (no code — fetched per-submission when viewing one).
+function historyItem(s) {
+  return {
+    id: String(s._id),
+    problemId: String(s.problemId),
+    verdict: s.verdict,
+    status: s.status,
+    language: s.language,
+    stats: s.stats,
+    createdAt: s.createdAt,
+  };
+}
+
 // Client-facing view of a submission (no internal fields).
 function publicSubmission(s) {
   return {
@@ -95,14 +109,34 @@ submissionsRouter.post(
   asyncHandler((req, res) => enqueueAndRespond(req, res, "submit"))
 );
 
-// GET /api/submissions/:id — poll status/verdict.
+// GET /api/submissions?problem=slug — the signed-in user's history (official attempts).
+submissionsRouter.get(
+  "/",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    let problemId;
+    if (req.query.problem) {
+      const p = await Problem.findOne({ slug: req.query.problem }).select("_id").lean();
+      if (!p) return res.json({ submissions: [] });
+      problemId = p._id;
+    }
+    const subs = await getUserHistory({ userId: req.userId, problemId });
+    res.json({ submissions: subs.map(historyItem) });
+  })
+);
+
+// GET /api/submissions/:id — poll status/verdict; includes code if you own it.
 submissionsRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) throw notFound("submission not found");
     const s = await getSubmission(req.params.id);
     if (!s) throw notFound("submission not found");
-    res.json({ submission: publicSubmission(s) });
+
+    const view = publicSubmission(s);
+    const { userId } = getAuth(req);
+    if (userId && s.userId && userId === s.userId) view.code = s.code; // owner sees their code
+    res.json({ submission: view });
   })
 );
 
