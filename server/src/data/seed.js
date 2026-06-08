@@ -7,7 +7,7 @@
 const { connect, disconnect } = require("./db");
 const { Problem, TestCase } = require("./models");
 
-const PROBLEMS = [require("./problems/two-sum")];
+const PROBLEMS = require("./problems"); // registry of all problems (problems/index.js)
 
 async function seed() {
   await connect();

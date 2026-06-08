@@ -18,6 +18,7 @@
     "sandbox:demo": "node src/sandbox/demo.js",
     "sandbox:attacks": "node src/sandbox/attacks/run.js",
     "seed": "node src/data/seed.js",
+    "problems:verify": "node src/data/problems/verify.js",
     "engine:demo": "node src/engine/demo.js",
     "judge:demo": "node src/engine/judge.demo.js",
     "submission:demo": "node src/engine/submission.demo.js",
