@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@clerk/clerk-react";
 import { api } from "../lib/api.js";
+import { DIFFICULTY_CLASS } from "../lib/difficulty.js";
 
 // Problem library (ROADMAP Step 25; design per DECISIONS 024): a LeetCode-style
 // table — status / title / difficulty / acceptance / tags — with difficulty, tag,
@@ -13,12 +14,6 @@ import { api } from "../lib/api.js";
 // filter by per-user status). The backend's difficulty/tag/q query params (Step 18)
 // stay available for when the catalog grows. We re-fetch when sign-in state changes
 // because per-user `status` only comes back when a token is attached.
-
-const DIFFICULTY_CLASS = {
-  Easy: "text-easy",
-  Medium: "text-medium",
-  Hard: "text-hard",
-};
 
 export default function ProblemsPage() {
   const { isLoaded, isSignedIn } = useAuth();
