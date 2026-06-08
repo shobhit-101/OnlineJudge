@@ -30,6 +30,11 @@ export default function Navbar() {
         <NavLink to="/problems" className={navLink}>
           Problems
         </NavLink>
+        <SignedIn>
+          <NavLink to="/profile" className={navLink}>
+            Profile
+          </NavLink>
+        </SignedIn>
 
         <div className="ml-auto flex items-center gap-2">
           <SignedOut>

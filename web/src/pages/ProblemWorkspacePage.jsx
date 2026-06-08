@@ -5,12 +5,14 @@ import Editor from "@monaco-editor/react";
 import ReactMarkdown from "react-markdown";
 import { api } from "../lib/api.js";
 import { DIFFICULTY_CLASS } from "../lib/difficulty.js";
+import { fmt, formatInput } from "../lib/format.js";
+import VerdictSummary from "../components/VerdictSummary.jsx";
+import SubmissionsPanel from "../components/SubmissionsPanel.jsx";
 
-// Problem workspace (ROADMAP Steps 26-27; design per DECISIONS 024): a split pane —
-// description on the left, Monaco editor + Run/Submit console on the right. Step 26
-// built the shell + editor; Step 27 wires Run/Submit to the API and streams the live
-// verdict (queued → compiling → running case n/m → AC/WA/…) into the Result tab via a
-// fetch-based SSE reader. Submission history (the Submissions tab) lands in Step 28.
+// Problem workspace (ROADMAP Steps 26-28; design per DECISIONS 024): a split pane —
+// description / submissions on the left, Monaco editor + Run/Submit console on the
+// right. 26 built the shell + editor; 27 wired Run/Submit + the live SSE verdict;
+// 28 adds the Submissions tab (past attempts + read-only code).
 
 const ALL_LANGUAGES = [
   { id: "cpp", label: "C++", monaco: "cpp" },
@@ -18,23 +20,16 @@ const ALL_LANGUAGES = [
   { id: "java", label: "Java", monaco: "java" },
 ];
 
-const VERDICT_META = {
-  AC: { label: "Accepted", cls: "text-easy" },
-  WA: { label: "Wrong Answer", cls: "text-hard" },
-  TLE: { label: "Time Limit Exceeded", cls: "text-medium" },
-  MLE: { label: "Memory Limit Exceeded", cls: "text-medium" },
-  RE: { label: "Runtime Error", cls: "text-hard" },
-  CE: { label: "Compile Error", cls: "text-medium" },
-};
-
 const codeKey = (slug, lang) => `oj:code:${slug}:${lang}`;
-const fmt = (v) => JSON.stringify(v);
 
 export default function ProblemWorkspacePage() {
   const { slug } = useParams();
 
   const [problem, setProblem] = useState(null); // null while loading
   const [error, setError] = useState(null);
+
+  const [leftTab, setLeftTab] = useState("description"); // "description" | "submissions"
+  const [historyKey, setHistoryKey] = useState(0); // bump to refetch submissions
 
   const [language, setLanguage] = useState("cpp");
   const [code, setCode] = useState("");
@@ -113,6 +108,7 @@ export default function ProblemWorkspacePage() {
           else if (e.type === "result") {
             setResult({ ...e, kind });
             setProgress(null);
+            if (kind === "submit") setHistoryKey((k) => k + 1); // refresh history
           }
         },
       });
@@ -150,91 +146,114 @@ export default function ProblemWorkspacePage() {
 
   return (
     <div className="flex flex-col lg:h-[calc(100vh-3.5rem)] lg:flex-row">
-      {/* LEFT: description */}
+      {/* LEFT: description / submissions */}
       <section className="border-b border-edge lg:w-1/2 lg:overflow-y-auto lg:border-b-0 lg:border-r">
         <div className="flex items-center gap-4 border-b border-edge px-6 py-2 text-sm">
-          <span className="font-medium text-white">Description</span>
-          <span
-            className="cursor-not-allowed text-zinc-600"
-            title="Submission history arrives in Step 28"
+          <button
+            onClick={() => setLeftTab("description")}
+            className={
+              leftTab === "description"
+                ? "font-medium text-white"
+                : "text-zinc-400 hover:text-zinc-200"
+            }
+          >
+            Description
+          </button>
+          <button
+            onClick={() => setLeftTab("submissions")}
+            className={
+              leftTab === "submissions"
+                ? "font-medium text-white"
+                : "text-zinc-400 hover:text-zinc-200"
+            }
           >
             Submissions
-          </span>
+          </button>
         </div>
 
-        <div className="px-6 py-5">
-          <h1 className="text-xl font-semibold text-white">{problem.title}</h1>
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
-            <span
-              className={`font-medium ${
-                DIFFICULTY_CLASS[problem.difficulty] || "text-zinc-300"
-              }`}
-            >
-              {problem.difficulty}
-            </span>
-            {problem.acceptanceRate != null && (
-              <span className="text-zinc-500">
-                {problem.acceptanceRate}% acceptance
+        {leftTab === "description" ? (
+          <div className="px-6 py-5">
+            <h1 className="text-xl font-semibold text-white">{problem.title}</h1>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
+              <span
+                className={`font-medium ${
+                  DIFFICULTY_CLASS[problem.difficulty] || "text-zinc-300"
+                }`}
+              >
+                {problem.difficulty}
               </span>
+              {problem.acceptanceRate != null && (
+                <span className="text-zinc-500">
+                  {problem.acceptanceRate}% acceptance
+                </span>
+              )}
+            </div>
+
+            <div className="mt-5 text-sm">
+              <ReactMarkdown components={MD}>{problem.statement}</ReactMarkdown>
+            </div>
+
+            {problem.samples?.length > 0 && (
+              <div className="mt-6 space-y-4">
+                {problem.samples.map((s, i) => (
+                  <div key={i}>
+                    <p className="mb-1 text-sm font-medium text-zinc-200">
+                      Example {i + 1}
+                    </p>
+                    <div className="overflow-x-auto rounded-md border border-edge bg-panel px-4 py-3 font-mono text-xs leading-relaxed text-zinc-300">
+                      <div>
+                        <span className="text-zinc-500">Input: </span>
+                        {formatInput(problem.signature, s.input)}
+                      </div>
+                      <div>
+                        <span className="text-zinc-500">Output: </span>
+                        {fmt(s.expected)}
+                      </div>
+                      {s.explanation && (
+                        <div className="mt-1 font-sans text-zinc-400">
+                          <span className="text-zinc-500">Explanation: </span>
+                          {s.explanation}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {problem.constraints?.length > 0 && (
+              <div className="mt-6">
+                <p className="mb-2 text-sm font-medium text-zinc-200">
+                  Constraints
+                </p>
+                <ul className="list-disc space-y-1 pl-5 font-mono text-xs text-zinc-400">
+                  {problem.constraints.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {problem.tags?.length > 0 && (
+              <div className="mt-6 flex flex-wrap gap-1.5">
+                {problem.tags.map((t) => (
+                  <span
+                    key={t}
+                    className="rounded bg-panel px-2 py-0.5 text-xs text-zinc-400"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
-
-          <div className="mt-5 text-sm">
-            <ReactMarkdown components={MD}>{problem.statement}</ReactMarkdown>
-          </div>
-
-          {problem.samples?.length > 0 && (
-            <div className="mt-6 space-y-4">
-              {problem.samples.map((s, i) => (
-                <div key={i}>
-                  <p className="mb-1 text-sm font-medium text-zinc-200">
-                    Example {i + 1}
-                  </p>
-                  <div className="overflow-x-auto rounded-md border border-edge bg-panel px-4 py-3 font-mono text-xs leading-relaxed text-zinc-300">
-                    <div>
-                      <span className="text-zinc-500">Input: </span>
-                      {formatInput(problem.signature, s.input)}
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Output: </span>
-                      {fmt(s.expected)}
-                    </div>
-                    {s.explanation && (
-                      <div className="mt-1 font-sans text-zinc-400">
-                        <span className="text-zinc-500">Explanation: </span>
-                        {s.explanation}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {problem.constraints?.length > 0 && (
-            <div className="mt-6">
-              <p className="mb-2 text-sm font-medium text-zinc-200">Constraints</p>
-              <ul className="list-disc space-y-1 pl-5 font-mono text-xs text-zinc-400">
-                {problem.constraints.map((c, i) => (
-                  <li key={i}>{c}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {problem.tags?.length > 0 && (
-            <div className="mt-6 flex flex-wrap gap-1.5">
-              {problem.tags.map((t) => (
-                <span
-                  key={t}
-                  className="rounded bg-panel px-2 py-0.5 text-xs text-zinc-400"
-                >
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
+        ) : (
+          <SubmissionsPanel
+            key={historyKey}
+            slug={slug}
+            signature={problem.signature}
+          />
+        )}
       </section>
 
       {/* RIGHT: editor + console */}
@@ -373,24 +392,6 @@ export default function ProblemWorkspacePage() {
   );
 }
 
-// signature.params zipped with the input array → "nums = [2,7,11,15], target = 9".
-function formatInput(signature, input) {
-  if (!signature?.params || !Array.isArray(input)) return fmt(input);
-  return signature.params.map((p, i) => `${p.name} = ${fmt(input[i])}`).join(", ");
-}
-
-function phaseText(status) {
-  if (status === "compiling") return "Compiling…";
-  if (status === "running") return "Running…";
-  if (status === "queued") return "In queue…";
-  return "Judging…";
-}
-
-function formatMemory(kb) {
-  if (kb == null) return "—";
-  return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`;
-}
-
 function ResultView({ result, signature }) {
   if (result.status === "error") {
     return (
@@ -402,57 +403,14 @@ function ResultView({ result, signature }) {
       </div>
     );
   }
+  return <VerdictSummary data={result} signature={signature} />;
+}
 
-  const meta = VERDICT_META[result.verdict] || {
-    label: result.verdict,
-    cls: "text-zinc-200",
-  };
-
-  return (
-    <div className="text-sm">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className={`text-base font-semibold ${meta.cls}`}>{meta.label}</span>
-        {result.verdict !== "CE" && result.passed != null && (
-          <span className="text-zinc-500">
-            {result.passed}/{result.total}{" "}
-            {result.kind === "run" ? "sample" : "test"} cases passed
-          </span>
-        )}
-      </div>
-
-      {result.verdict !== "CE" && result.stats && (
-        <div className="mt-1 text-xs text-zinc-500">
-          {result.stats.timeMs != null && <>Time {result.stats.timeMs} ms</>}
-          {result.stats.memoryKb != null && (
-            <> · Memory {formatMemory(result.stats.memoryKb)}</>
-          )}
-        </div>
-      )}
-
-      {result.verdict === "CE" && result.compileOutput && (
-        <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-panel p-3 font-mono text-xs text-hard">
-          {result.compileOutput}
-        </pre>
-      )}
-
-      {result.failedCase && (
-        <div className="mt-3 space-y-1 rounded-md border border-edge bg-panel p-3 font-mono text-xs text-zinc-300">
-          <div>
-            <span className="text-zinc-500">Input: </span>
-            {formatInput(signature, result.failedCase.input)}
-          </div>
-          <div>
-            <span className="text-zinc-500">Expected: </span>
-            {fmt(result.failedCase.expected)}
-          </div>
-          <div>
-            <span className="text-zinc-500">Output: </span>
-            {result.failedCase.actual || "(no output)"}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+function phaseText(status) {
+  if (status === "compiling") return "Compiling…";
+  if (status === "running") return "Running…";
+  if (status === "queued") return "In queue…";
+  return "Judging…";
 }
 
 function Spinner() {
