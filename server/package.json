@@ -24,6 +24,7 @@
     "submission:demo": "node src/engine/submission.demo.js",
     "queue:demo": "node src/queue/demo.js",
     "worker": "node src/worker/start.js",
+    "benchmark": "node src/worker/benchmark.js",
     "worker:demo": "node src/worker/demo.js",
     "pool:demo": "node src/worker/pool.demo.js"
   }
