@@ -1,24 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { SignedIn, SignedOut, SignInButton } from "@clerk/clerk-react";
 import Editor from "@monaco-editor/react";
 import ReactMarkdown from "react-markdown";
 import { api } from "../lib/api.js";
 import { DIFFICULTY_CLASS } from "../lib/difficulty.js";
 
-// Problem workspace (ROADMAP Step 26; design per DECISIONS 024): a split pane —
-// problem description on the left, the Monaco (VS Code) editor + a Run/Submit
-// console on the right. This step builds the shell + the editor; Run/Submit get
-// wired to the API in Step 27 (so the buttons are present but disabled), and the
-// Submissions tab + history land in Step 28.
+// Problem workspace (ROADMAP Steps 26-27; design per DECISIONS 024): a split pane —
+// description on the left, Monaco editor + Run/Submit console on the right. Step 26
+// built the shell + editor; Step 27 wires Run/Submit to the API and streams the live
+// verdict (queued → compiling → running case n/m → AC/WA/…) into the Result tab via a
+// fetch-based SSE reader. Submission history (the Submissions tab) lands in Step 28.
 
-// All three languages; an entry is selectable only if the problem ships starter
-// code for it. v1 is C++-only (DECISIONS 013) — Python/Java arrive in Phase 5 and
-// will light up here automatically once their starter code exists.
 const ALL_LANGUAGES = [
   { id: "cpp", label: "C++", monaco: "cpp" },
   { id: "python", label: "Python", monaco: "python" },
   { id: "java", label: "Java", monaco: "java" },
 ];
+
+const VERDICT_META = {
+  AC: { label: "Accepted", cls: "text-easy" },
+  WA: { label: "Wrong Answer", cls: "text-hard" },
+  TLE: { label: "Time Limit Exceeded", cls: "text-medium" },
+  MLE: { label: "Memory Limit Exceeded", cls: "text-medium" },
+  RE: { label: "Runtime Error", cls: "text-hard" },
+  CE: { label: "Compile Error", cls: "text-medium" },
+};
 
 const codeKey = (slug, lang) => `oj:code:${slug}:${lang}`;
 const fmt = (v) => JSON.stringify(v);
@@ -33,8 +40,18 @@ export default function ProblemWorkspacePage() {
   const [code, setCode] = useState("");
   const [consoleTab, setConsoleTab] = useState("testcase");
 
-  // Load the problem detail.
+  const [judging, setJudging] = useState(null); // null | "run" | "submit"
+  const [progress, setProgress] = useState(null); // { text } while a job is live
+  const [result, setResult] = useState(null); // terminal result event (+ kind)
+  const abortRef = useRef(null);
+
+  // Load the problem detail; reset any in-flight job + prior result on slug change.
   useEffect(() => {
+    abortRef.current?.abort();
+    setJudging(null);
+    setProgress(null);
+    setResult(null);
+
     let alive = true;
     setProblem(null);
     setError(null);
@@ -46,6 +63,9 @@ export default function ProblemWorkspacePage() {
       alive = false;
     };
   }, [slug]);
+
+  // Abort a live stream if we unmount mid-judge.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   // Seed the editor when the problem loads or the language changes: prefer the
   // user's saved draft (localStorage), else the problem's starter code.
@@ -66,6 +86,47 @@ export default function ProblemWorkspacePage() {
     if (!problem) return;
     localStorage.removeItem(codeKey(slug, language));
     setCode(problem.starterCode?.[language] || "");
+  };
+
+  // Submit a Run (sample cases) or Submit (full suite), then stream live progress.
+  const runJob = async (kind) => {
+    if (judging) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setJudging(kind);
+    setResult(null);
+    setProgress({ text: "Submitting…" });
+    setConsoleTab("result");
+
+    try {
+      const submit = kind === "run" ? api.run : api.submit;
+      const { submissionId } = await submit({ problemSlug: slug, language, code });
+      setProgress({ text: "In queue…" });
+
+      await api.streamSubmission(submissionId, {
+        signal: controller.signal,
+        onEvent: (e) => {
+          if (e.type === "status") setProgress({ text: phaseText(e.status) });
+          else if (e.type === "progress")
+            setProgress({ text: `Running test ${e.index}/${e.total}…` });
+          else if (e.type === "result") {
+            setResult({ ...e, kind });
+            setProgress(null);
+          }
+        },
+      });
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setResult({ status: "error", error: err.message, kind });
+        setProgress(null);
+      }
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setJudging(null);
+      }
+    }
   };
 
   if (error) {
@@ -203,20 +264,29 @@ export default function ProblemWorkspacePage() {
             Reset
           </button>
           <div className="ml-auto flex items-center gap-2">
-            <button
-              disabled
-              title="Wired in Step 27"
-              className="h-8 cursor-not-allowed rounded-md border border-edge px-3 text-sm text-zinc-500"
-            >
-              Run
-            </button>
-            <button
-              disabled
-              title="Wired in Step 27"
-              className="h-8 cursor-not-allowed rounded-md bg-brand/40 px-3 text-sm font-medium text-black/60"
-            >
-              Submit
-            </button>
+            <SignedOut>
+              <SignInButton mode="modal">
+                <button className="h-8 rounded-md bg-brand px-3 text-sm font-medium text-black hover:opacity-90">
+                  Sign in to run
+                </button>
+              </SignInButton>
+            </SignedOut>
+            <SignedIn>
+              <button
+                onClick={() => runJob("run")}
+                disabled={!!judging}
+                className="h-8 rounded-md border border-edge px-3 text-sm text-zinc-200 hover:bg-panel-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {judging === "run" ? "Running…" : "Run"}
+              </button>
+              <button
+                onClick={() => runJob("submit")}
+                disabled={!!judging}
+                className="h-8 rounded-md bg-brand px-3 text-sm font-medium text-black hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {judging === "submit" ? "Submitting…" : "Submit"}
+              </button>
+            </SignedIn>
           </div>
         </div>
 
@@ -284,9 +354,16 @@ export default function ProblemWorkspacePage() {
                   </div>
                 ))}
               </div>
+            ) : progress ? (
+              <div className="flex items-center gap-3 text-sm text-zinc-300">
+                <Spinner />
+                {progress.text}
+              </div>
+            ) : result ? (
+              <ResultView result={result} signature={problem.signature} />
             ) : (
               <p className="text-sm text-zinc-500">
-                Run or Submit to see the verdict. (Wired in Step 27.)
+                Run or Submit to see the verdict.
               </p>
             )}
           </div>
@@ -300,6 +377,88 @@ export default function ProblemWorkspacePage() {
 function formatInput(signature, input) {
   if (!signature?.params || !Array.isArray(input)) return fmt(input);
   return signature.params.map((p, i) => `${p.name} = ${fmt(input[i])}`).join(", ");
+}
+
+function phaseText(status) {
+  if (status === "compiling") return "Compiling…";
+  if (status === "running") return "Running…";
+  if (status === "queued") return "In queue…";
+  return "Judging…";
+}
+
+function formatMemory(kb) {
+  if (kb == null) return "—";
+  return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`;
+}
+
+function ResultView({ result, signature }) {
+  if (result.status === "error") {
+    return (
+      <div className="text-sm">
+        <div className="font-semibold text-hard">Judge Error</div>
+        <p className="mt-1 text-zinc-400">
+          {result.error || "Something went wrong while judging."}
+        </p>
+      </div>
+    );
+  }
+
+  const meta = VERDICT_META[result.verdict] || {
+    label: result.verdict,
+    cls: "text-zinc-200",
+  };
+
+  return (
+    <div className="text-sm">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className={`text-base font-semibold ${meta.cls}`}>{meta.label}</span>
+        {result.verdict !== "CE" && result.passed != null && (
+          <span className="text-zinc-500">
+            {result.passed}/{result.total}{" "}
+            {result.kind === "run" ? "sample" : "test"} cases passed
+          </span>
+        )}
+      </div>
+
+      {result.verdict !== "CE" && result.stats && (
+        <div className="mt-1 text-xs text-zinc-500">
+          {result.stats.timeMs != null && <>Time {result.stats.timeMs} ms</>}
+          {result.stats.memoryKb != null && (
+            <> · Memory {formatMemory(result.stats.memoryKb)}</>
+          )}
+        </div>
+      )}
+
+      {result.verdict === "CE" && result.compileOutput && (
+        <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-panel p-3 font-mono text-xs text-hard">
+          {result.compileOutput}
+        </pre>
+      )}
+
+      {result.failedCase && (
+        <div className="mt-3 space-y-1 rounded-md border border-edge bg-panel p-3 font-mono text-xs text-zinc-300">
+          <div>
+            <span className="text-zinc-500">Input: </span>
+            {formatInput(signature, result.failedCase.input)}
+          </div>
+          <div>
+            <span className="text-zinc-500">Expected: </span>
+            {fmt(result.failedCase.expected)}
+          </div>
+          <div>
+            <span className="text-zinc-500">Output: </span>
+            {result.failedCase.actual || "(no output)"}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-zinc-600 border-t-zinc-200" />
+  );
 }
 
 // Tailwind styling for the markdown statement (no typography plugin needed). Each

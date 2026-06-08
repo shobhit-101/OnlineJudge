@@ -73,6 +73,51 @@ function queryString(params) {
   return entries.length ? "?" + new URLSearchParams(entries).toString() : "";
 }
 
+// Live submission progress over SSE, read with fetch (the native EventSource can't
+// send an Authorization header — the constraint tracked since Phase 3). Parses the
+// `data: <json>\n\n` frames, calls onEvent(event) for each, and resolves when the
+// terminal "result" event arrives or the stream ends. Pass an AbortSignal to cancel.
+async function streamSubmission(id, { onEvent, signal } = {}) {
+  const res = await fetch(`${BASE}/api/submissions/${id}/stream`, {
+    headers: await authHeader(),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(`stream failed (${res.status})`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let sep;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const data = frame
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trim())
+          .join("\n");
+        if (!data) continue; // heartbeat / comment line
+        let event;
+        try {
+          event = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        onEvent?.(event);
+        if (event.type === "result") return; // terminal
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
 export const api = {
   // --- public, but personalized when signed in: attaching a token (if present)
   //     makes the API include each problem's per-user `status`. ---
@@ -102,4 +147,7 @@ export const api = {
     }),
   /** @returns {Promise<Profile>} */
   getProfile: () => request(`/api/profile`, { auth: true }),
+
+  // Live progress for a submission (see streamSubmission above).
+  streamSubmission,
 };
