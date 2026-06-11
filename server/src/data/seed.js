@@ -7,7 +7,9 @@
 const { connect, disconnect } = require("./db");
 const { Problem, TestCase } = require("./models");
 
-const PROBLEMS = require("./problems"); // registry of all problems (problems/index.js)
+// NOTE: require the index explicitly — `require("./problems")` would resolve to the
+// sibling file data/problems.js (the API data layer), not this directory's registry.
+const PROBLEMS = require("./problems/index"); // registry of all problems
 
 async function seed() {
   await connect();

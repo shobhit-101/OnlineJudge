@@ -23,7 +23,7 @@ const BASE = import.meta.env.VITE_API_BASE ?? "";
  * @typedef {Object} Profile
  * @property {number} totalSolved
  * @property {Record<string, number>} solvedByDifficulty
- * @property {Array<{ id: string, problemSlug: string, problemTitle: string, verdict: string, createdAt: string }>} recentActivity
+ * @property {Array<{ id: string, problem: { slug: string, title: string } | null, verdict: string, language: string, timeMs: number | null, createdAt: string }>} recentActivity
  * @property {Record<string, number>} heatmap
  */
 
@@ -145,7 +145,7 @@ export const api = {
     request(`/api/submissions${queryString({ problem: problemSlug })}`, {
       auth: true,
     }),
-  /** @returns {Promise<Profile>} */
+  /** @returns {Promise<{ dashboard: Profile }>} */
   getProfile: () => request(`/api/profile`, { auth: true }),
 
   // Live progress for a submission (see streamSubmission above).
